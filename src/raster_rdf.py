@@ -1,9 +1,11 @@
 import numpy as np
+from scipy.spatial import KDTree
 import pyvista as pv
 
 # read positions from LAMMPS file
 #positions_path = rf'\\research.drive.wisc.edu\dcfredrickso\Patrick\SSMC\Positions.dump'
-positions_path = 'color_atoms_kick_plane.txt'
+#positions_path = '../color_atoms_kick_plane.txt'
+positions_path = '../examples/First_positions.txt'
 print('Reading positions file')
 with open(positions_path) as f:
     lines = f.readlines()
@@ -24,9 +26,8 @@ for i, pos in enumerate(first_pos):
     pos = pos.strip().split(' ')
     pos = [ch for ch in pos if ch != '']
     positions[i:] = [float(p) for p in pos[2:5]]
-    rgb_vals[i:] = [float(c) for c in pos[5:]]
-opacities = [1 if np.sum(num) > 2.5 else 0 for num in rgb_vals]
-scale = False
+    
+scale = True
 if scale:
     positions *= cell_len
 positions -= shift
@@ -75,33 +76,23 @@ if scalars:
     print('RDF complete')
     print(grid_scalars)
 
-# liquid interface of constant density
-vals = np.zeros((len(grid.points),1))
-eta = 0.95
-print('Compute Gaussians')
-for i, pt in enumerate(grid.points):
-    dist = np.linalg.norm(pt-positions.points, axis=1)
-    gaussian = (2*np.pi*eta**2)**(-3/2) * np.exp(-dist**2/(2*eta**2))
-    vals[i] = np.sum(gaussian)
-
-# interpolation
-resolution = sampling
-print('Interpolating')
-hi_res_grid = pv.ImageData(
-    dimensions=3*[resolution],
-    origin=3*[0.5*cell_len/resolution],
-    spacing=3*[cell_len/resolution]
+# nearest neighbor search
+print('Neighbor Search')
+some_num = np.random.randint(
+    low = 0,
+    high = len(positions.points)
 )
-grid['values'] = vals
-interp_grid = hi_res_grid.interpolate(
-    grid,
-    radius=eta
+search_pt = positions.points[some_num]
+tree = KDTree(
+    data = positions.points,
+    leafsize = 10
 )
-contours = interp_grid.contour(
-    isosurfaces = 5,
-    method = 'contour'
+nbr_dists, nbr_inds = tree.query(
+    x = search_pt,
+    distance_upper_bound=5,
+    k=20
 )
-contours = contours.smooth_taubin(n_iter=100, pass_band=0.05)
+nearest_nbrs = np.take(positions.points, nbr_inds, axis=0)
 
 # cubic partition
 sub_cubes = pv.MultiBlock()
@@ -131,10 +122,21 @@ p.add_mesh(
 p.add_mesh(
     positions,
     style='points',
-    point_size=10,
-    scalars=rgb_vals,
-    opacity=1,
-    render_points_as_spheres=True
+    color='red',
+)
+p.add_mesh(
+    pv.PolyData(nearest_nbrs),
+    style='points',
+    point_size=15,
+    render_points_as_spheres=True,
+    color='green'
+)
+p.add_mesh(
+    search_pt,
+    style='points',
+    point_size=15,
+    render_points_as_spheres=True,
+    color='blue'
 )
 '''
 p.add_mesh(
@@ -147,11 +149,4 @@ p.add_mesh(
     color='green'
 )
 '''
-p.add_mesh(
-    contours,
-    color='red',
-    opacity=1,
-    smooth_shading=True
-)
-
 p.show()
