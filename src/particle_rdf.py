@@ -74,46 +74,8 @@ def FrameImporter(filename, frame):
                         collectData = True
                         continues = 7
 
-def ParticleRDF(positionArray, targetID, binCount=1000, maxRange=20):
-    """
-    Calculates the histogram of distances between the target particle and every 
-    other particle in a frame.
-    
-    Parameters
-    ----------
-    positionArray : nd.array
-        numpy array containing the position data of each particle. The ID should
-        be the index.
-    targetID : int
-        The ID of the particle around which the rdf will be calculated.
-    binCount : int, default=1000
-        The number of bins in the rdf, defaults to 1000.
-    maxRange : float, default=20
-        The distance in angstroms the rdf should be calculated to.
-    
-    Returns
-    ----------
-    histValues : nd.array
-        The values of each bins, normalized to a sum of 1.
-    binEdges : nd.array of dtype float
-        The edges of the histogram bins.
-    """
-    
-    vector1 = positionArray[targetID]
-    
-    distanceArray = np.empty(np.shape(positionArray)[0])
-    
-    for c, vector2 in enumerate(positionArray):
-        distance = np.linalg.norm(vector1-vector2)
-        
-        distanceArray[c] = distance
-    
-    histValues, binEdges = np.histogram(distanceArray, bins=binCount, 
-                                        density=True, range=(0, maxRange))
-    
-    return (histValues, binEdges)
 
-def TreeRDF(positionArray, targetID, binCount=1000, maxRange=20):
+def TreeRDF(positionArray, targetID, maxRange):
     """
     Calculates the histogram of distances between the target particle and every 
     other particle in a frame.
@@ -125,17 +87,13 @@ def TreeRDF(positionArray, targetID, binCount=1000, maxRange=20):
         be the index.
     targetID : int
         The ID of the particle around which the rdf will be calculated.
-    binCount : int, default=1000
-        The number of bins in the rdf, defaults to 1000.
-    maxRange : float, default=20
+    maxRange : float
         The distance in angstroms the rdf should be calculated to.
     
     Returns
     ----------
-    histValues : nd.array
-        The values of each bins, normalized to a sum of 1.
-    binEdges : nd.array of dtype float
-        The edges of the histogram bins.
+    distanceArray : nd.array of floats
+        Array containing the distances of all particles within maxRange.
     """
     tree = KDTree(positionArray)
     
@@ -143,12 +101,9 @@ def TreeRDF(positionArray, targetID, binCount=1000, maxRange=20):
     
     distanceArray = np.linalg.norm(positionArray[indexArray] - positionArray[targetID], axis=1)
     
-    histValues, binEdges = np.histogram(distanceArray, bins=binCount, 
-                                        density=True, range=(0, maxRange))
-    
-    return (histValues, binEdges)
+    return distanceArray
 
-def GeneratorWrapper(filename, frames, targetID):
+def GeneratorWrapper(filename, frames, targetID, maxRange):
     """
     Wrapper to minimize memory usage while generating the rdf for a particle 
     over a range of frames. Does not save the position data after calculating
@@ -162,71 +117,37 @@ def GeneratorWrapper(filename, frames, targetID):
         The target frame or sequence of frames to be extracted. If a sequence
         is used, all frames must be contiguous
     targetID : int
-        The ID of the particle around which the rdf will be calculated.    
+        The ID of the particle around which the rdf will be calculated.
+    maxRange : float
+        The distance in angstroms the rdf should be calculated to.
+        
     Returns
     ----------
-    histValuesList : List of nd.arrays
-        A list containing the values of each bins, normalized to a sum of 1, 
-        for each frame
-    binEdgesList : List of nd.arrays of dtype float
-        A list containing the edges of the histogram bins for each frame
+    histValuesArray : nd.array
+        A 2d array organized by frame x histogramValues
+    binEdgesList : nd.array
+        A 2d array organized by frame x binEdges
     """
     frameGenerator = FrameImporter(filename, frames)
     
-    histValuesList = []
-    binEdgesList = []
+    histValuesArray = np.empty((len(frames), binCount))
+    binEdgesArray = np.empty((len(frames), binCount))
 
     for i in range(len(frames)):
-        positions = next(frameGenerator)
+        positionArray = next(frameGenerator)
 
-        histValues, binEdges = ParticleRDF(positions, targetID, binCount=500)
-        histValuesList.append(histValues)
-        binEdgesList.append(binEdges)
+        distanceArray = TreeRDF(positionArray, targetID, maxRange)
+        histValues, binEdges = np.histogram(distanceArray, density=True,
+                                            binCount=1000, range=(0, maxRange))
+        histValuesArray[i] = histValues
+        binEdgesArray[i] = binEdges
 
-        # print(f"{(i+1)/len(frames)*100:5.2f}" + "% complete", end='\r')
+        print(f"{(i+1)/len(frames)*100:5.2f}" + "% complete", end='\r')
     
-    return (histValuesList, binEdgesList)
+    return (histValuesArray, binEdgesArray)
 
-def GeneratorWrapperTree(filename, frames, targetID):
-    """
-    Wrapper to minimize memory usage while generating the rdf for a particle 
-    over a range of frames. Does not save the position data after calculating
-    the rdf
-    
-    Parameters
-    ----------
-    filename : string
-        The path to the position file
-    frame : int or sequence of ints
-        The target frame or sequence of frames to be extracted. If a sequence
-        is used, all frames must be contiguous
-    targetID : int
-        The ID of the particle around which the rdf will be calculated.    
-    Returns
-    ----------
-    histValuesList : List of nd.arrays
-        A list containing the values of each bins, normalized to a sum of 1, 
-        for each frame
-    binEdgesList : List of nd.arrays of dtype float
-        A list containing the edges of the histogram bins for each frame
-    """
-    frameGenerator = FrameImporter(filename, frames)
-    
-    histValuesList = []
-    binEdgesList = []
 
-    for i in range(len(frames)):
-        positions = next(frameGenerator)
-
-        histValues, binEdges = TreeRDF(positions, targetID, binCount=500)
-        histValuesList.append(histValues)
-        binEdgesList.append(binEdges)
-
-        # print(f"{(i+1)/len(frames)*100:5.2f}" + "% complete", end='\r')
-    
-    return (histValuesList, binEdgesList)
-
-def GeneratorWrapperGaussian(filename, frames, targetID):
+def GeneratorWrapperGaussian(filename, frames, targetID, maxRange):
     """
     Wrapper to minimize memory usage while generating the rdf for a particle 
     over a range of frames. Does not save the position data after calculating 
@@ -241,28 +162,28 @@ def GeneratorWrapperGaussian(filename, frames, targetID):
         The target frame or sequence of frames to be extracted. If a sequence 
         is used, all frames must be contiguous
     targetID : int
-        The ID of the particle around which the rdf will be calculated.    
+        The ID of the particle around which the rdf will be calculated.
+    maxRange : float
+        The distance in angstroms the rdf should be calculated to.
+        
     Returns
     ----------
     x : nd.array
         Array covering the x axis containing 5000 points.
-    yList : List of nd.arrays of dtype float
-        A list containing the gaussian broadened signal at each distance.
+    broadenedPeaks : nd.array of dtype float
+        A 2d array organized by frame x peakHeight
     """
     
     frameGenerator = FrameImporter(filename, frames)
     
-    yList = []
+    broadenedPeaks = np.empty((len(frames), 5000))
 
     for i in range(len(frames)):
-        positions = next(frameGenerator)
-        distanceArray = np.empty(np.shape(positions)[0])
-        vector1 = positions[targetID]
-        for c, vector2 in enumerate(positions):
-            dist = np.linalg.norm(vector1-vector2)
-            distanceArray[c] = dist
+        positionArray = next(frameGenerator)
+
+        distanceArray = TreeRDF(positionArray, targetID, maxRange)
         
-        x = np.linspace(0, 20, 5000)
+        x = np.linspace(0, maxRange, 5000)
         y = np.zeros(5000)
         
         sigma = 0.05
@@ -271,59 +192,8 @@ def GeneratorWrapperGaussian(filename, frames, targetID):
             
             y += gaussianFunc(x, point)
             
-        yList.append(y)
+        broadenedPeaks[i] = y
         print(f"{(i+1)/len(frames)*100:5.2f}" + "% complete", end='\r')
         
     
-    return (x, yList)
-
-def GeneratorWrapperGaussianTree(filename, frames, targetID):
-    """
-    Wrapper to minimize memory usage while generating the rdf for a particle 
-    over a range of frames. Does not save the position data after calculating 
-    the rdf. Additionally, points are broadened using gaussians 
-    and summed together.
-    
-    Parameters
-    ----------
-    filename : string
-        The path to the position file
-    frame : int or sequence of ints
-        The target frame or sequence of frames to be extracted. If a sequence 
-        is used, all frames must be contiguous
-    targetID : int
-        The ID of the particle around which the rdf will be calculated.    
-    Returns
-    ----------
-    x : nd.array
-        Array covering the x axis containing 5000 points.
-    yList : List of nd.arrays of dtype float
-        A list containing the gaussian broadened signal at each distance.
-    """
-    
-    frameGenerator = FrameImporter(filename, frames)
-    
-    yList = []
-
-    for i in range(len(frames)):
-        positions = next(frameGenerator)
-        tree = KDTree(positions)
-    
-        indexArray = tree.query_ball_point(positions[targetID], 20)
-    
-        distanceArray = np.linalg.norm(positions[indexArray] - positions[targetID], axis=1)
-        
-        x = np.linspace(0, 20, 5000)
-        y = np.zeros(5000)
-        
-        sigma = 0.05
-        gaussianFunc = lambda x, mu : np.exp(-((x-mu)**2)/(2*sigma**2))
-        for point in distanceArray:
-            
-            y += gaussianFunc(x, point)
-            
-        yList.append(y)
-        print(f"{(i+1)/len(frames)*100:5.2f}" + "% complete", end='\r')
-        
-    
-    return (x, yList)
+    return (x, broadenedPeaks)
