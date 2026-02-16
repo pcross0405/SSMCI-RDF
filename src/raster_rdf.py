@@ -1,11 +1,12 @@
 import numpy as np
 from scipy.spatial import KDTree
 import pyvista as pv
+from bandu.translate import TranslatePoints
 
 # read positions from LAMMPS file
 #positions_path = rf'\\research.drive.wisc.edu\dcfredrickso\Patrick\SSMC\Positions.dump'
-#positions_path = '../color_atoms_kick_plane.txt'
-positions_path = '../examples/First_positions.txt'
+positions_path = '../examples/color_atoms_kick_plane.txt'
+#positions_path = '../examples/First_positions.txt'
 print('Reading positions file')
 with open(positions_path) as f:
     lines = f.readlines()
@@ -26,8 +27,10 @@ for i, pos in enumerate(first_pos):
     pos = pos.strip().split(' ')
     pos = [ch for ch in pos if ch != '']
     positions[i:] = [float(p) for p in pos[2:5]]
-    
-scale = True
+    rgb_vals[i:] = [float(c) for c in pos[5:]]
+opacities1 = [1 if np.sum(num) > 2.5 else 0 for num in rgb_vals]
+opacities2 = [1 if np.sum(num) < 2.5 else 0 for num in rgb_vals]
+scale = False
 if scale:
     positions *= cell_len
 positions -= shift
@@ -42,57 +45,45 @@ grid = pv.ImageData(
     spacing=(cell_len/sampling,cell_len/sampling,cell_len/sampling)
 )
 
-# compute rdf at each grid point
-radius = cell_len/sampling
-dr = 0.5
-grid_scalars = []
-scalars = 0
-if scalars:
-    print('Computing RDF')
-    for pt in grid.points:
-        max_count = 0
-        start = 0.01
-        while dr <= radius:
-            s1 = pv.Sphere(
-                center=pt,
-                radius=start
-            )
-            s2 = pv.Sphere(
-                center=pt,
-                radius=dr
-            )
-            p1 = positions.select_enclosed_points(s1)
-            p1_mask = p1['SelectedPoints'].view(bool)
-            p1 = positions.extract_points(p1_mask, adjacent_cells=False)
-            p2 = positions.select_enclosed_points(s2)
-            p2_mask = p2['SelectedPoints'].view(bool)
-            p2 = positions.extract_points(p2_mask, adjacent_cells=False)
-            count = len([p for p in p2.points if p not in p1.points])
-            if count > max_count:
-                max_count = count
-            dr += 0.5
-            start += 0.5
-        grid_scalars.append(max_count)
-    print('RDF complete')
-    print(grid_scalars)
-
 # nearest neighbor search
 print('Neighbor Search')
-some_num = np.random.randint(
-    low = 0,
-    high = len(positions.points)
-)
-search_pt = positions.points[some_num]
+scalars = np.zeros((sampling**3,1))
 tree = KDTree(
     data = positions.points,
     leafsize = 10
 )
-nbr_dists, nbr_inds = tree.query(
-    x = search_pt,
-    distance_upper_bound=5,
-    k=20
+for i, search_pt in enumerate(grid.points):
+    nbr_inds = tree.query_ball_point(
+        x = search_pt,
+        r = 10
+    )
+    nearest_nbrs = np.take(positions.points, nbr_inds, axis=0)
+    nbr_dists = np.linalg.norm(nearest_nbrs-search_pt, axis=1)
+    hist, bin_edges = np.histogram(
+        nbr_dists,
+        bins = 200,
+        range = (0,10)
+    )
+    scalars[i] = np.max(hist)
+
+# interpolate grid
+trans_points, trans_scalars = TranslatePoints(
+    points = grid.points,
+    values = scalars,
+    lattice_vecs = cell_len*np.identity(3)
 )
-nearest_nbrs = np.take(positions.points, nbr_inds, axis=0)
+trans_grid = pv.PolyData(trans_points)
+trans_grid['values'] = trans_scalars
+magnitude = 0.01
+grid = grid.interpolate(
+    trans_grid,
+    radius = magnitude*cell_len/sampling
+)
+contours = grid.contour(
+    isosurfaces = 10,
+    method = 'contour',
+    rng = [7,13]
+)
 
 # cubic partition
 sub_cubes = pv.MultiBlock()
@@ -120,25 +111,21 @@ p.add_mesh(
     color='black'
 )
 p.add_mesh(
+    contours,
+    opacity=0.5
+)
+p.add_mesh(
     positions,
     style='points',
-    color='red',
-)
-p.add_mesh(
-    pv.PolyData(nearest_nbrs),
-    style='points',
-    point_size=15,
-    render_points_as_spheres=True,
-    color='green'
-)
-p.add_mesh(
-    search_pt,
-    style='points',
-    point_size=15,
-    render_points_as_spheres=True,
-    color='blue'
+    point_size=10,
+    scalars=rgb_vals,
+    opacity=opacities1,
+    render_points_as_spheres=True
 )
 '''
+p.add_volume(
+    volume=grid, #type: ignore
+)
 p.add_mesh(
     sub_cubes,
     style='wireframe',
