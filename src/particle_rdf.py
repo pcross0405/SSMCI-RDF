@@ -57,7 +57,7 @@ def FrameImporter(filename, frame):
                 if line == "ITEM: TIMESTEP\n":
                     # yield the data for computation, wait for next command, then erase old data
                     yield positionArray
-                    positionArray = np.empty((atomCount, 3))
+                    
                     continues = 8
                 
                 else:
